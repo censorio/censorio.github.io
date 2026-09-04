@@ -439,6 +439,20 @@ body {
   line-height: 1.6;
   text-align: center;
 }
+.canvas-wrap .empty-state .empty-open-btn {
+  margin-top: 20px;
+  height: 40px;
+  padding: 0 20px;
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+  font-size: 14px;
+}
+.canvas-wrap .empty-state .empty-open-btn:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+  color: #fff;
+}
 
 /* Status bar */
 .statusbar {
