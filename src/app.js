@@ -608,6 +608,10 @@ function App() {
             <div class="empty-state">
               <div class="icon">📷</div>
               <p>${t('emptyHint').split('\n').map((line, idx) => idx === 0 ? html`${line}<br/>` : line)}</p>
+              <label class="file-btn empty-open-btn">
+                ${t('openFile')}
+                <input type="file" accept="image/*" hidden onInput=${handleFileInput} />
+              </label>
             </div>
           `}
           ${isLoading && html`
