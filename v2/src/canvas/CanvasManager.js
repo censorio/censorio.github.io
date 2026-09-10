@@ -46,6 +46,8 @@ export function createCanvasManager(canvasEl) {
   const HANDLE_SIZE = 8;
   let resizeHandle = null;
   let resizeStartBbox = null;
+  let resizeStartPoints = null;
+  let resizeStartBrushRadius = null;
   let resizeStartX = 0;
   let resizeStartY = 0;
 
@@ -276,6 +278,62 @@ export function createCanvasManager(canvasEl) {
     return null;
   }
 
+  /** Resize bbox from handle drag; returns a new bbox object. */
+  function bboxFromHandle(startBbox, handle, dx, dy, minSize = 10) {
+    const bbox = { ...startBbox };
+    switch (handle) {
+      case 'nw': bbox.x = Math.min(bbox.x + dx, bbox.x + bbox.w - minSize); bbox.y = Math.min(bbox.y + dy, bbox.y + bbox.h - minSize); bbox.w = Math.max(minSize, bbox.w - dx); bbox.h = Math.max(minSize, bbox.h - dy); break;
+      case 'n': bbox.y = Math.min(bbox.y + dy, bbox.y + bbox.h - minSize); bbox.h = Math.max(minSize, bbox.h - dy); break;
+      case 'ne': bbox.y = Math.min(bbox.y + dy, bbox.y + bbox.h - minSize); bbox.w = Math.max(minSize, bbox.w + dx); bbox.h = Math.max(minSize, bbox.h - dy); break;
+      case 'e': bbox.w = Math.max(minSize, bbox.w + dx); break;
+      case 'se': bbox.w = Math.max(minSize, bbox.w + dx); bbox.h = Math.max(minSize, bbox.h + dy); break;
+      case 's': bbox.h = Math.max(minSize, bbox.h + dy); break;
+      case 'sw': bbox.x = Math.min(bbox.x + dx, bbox.x + bbox.w - minSize); bbox.w = Math.max(minSize, bbox.w - dx); bbox.h = Math.max(minSize, bbox.h + dy); break;
+      case 'w': bbox.x = Math.min(bbox.x + dx, bbox.x + bbox.w - minSize); bbox.w = Math.max(minSize, bbox.w - dx); break;
+    }
+    return bbox;
+  }
+
+  /** Apply resized bbox to block geometry (rect corners or scaled freeform points). */
+  function applyBlockResize(block, oldBbox, newBbox, startPoints, startBrushRadius) {
+    block.bbox = { ...newBbox };
+    if (block.type === 'rect') {
+      block.points = [[newBbox.x, newBbox.y], [newBbox.x + newBbox.w, newBbox.y + newBbox.h]];
+      return;
+    }
+    const sx = oldBbox.w > 0 ? newBbox.w / oldBbox.w : 1;
+    const sy = oldBbox.h > 0 ? newBbox.h / oldBbox.h : 1;
+    const pts = startPoints || block.points;
+    block.points = pts.map(([px, py]) => [
+      newBbox.x + (px - oldBbox.x) * sx,
+      newBbox.y + (py - oldBbox.y) * sy,
+    ]);
+    if (block.type === 'brush') {
+      const baseR = startBrushRadius ?? block.brushRadius ?? brushRadius.value ?? 20;
+      block.brushRadius = Math.max(1, baseR * (Math.abs(sx) + Math.abs(sy)) / 2);
+    }
+  }
+
+  function beginBlockResize(block, handle, p) {
+    history.snapshot();
+    resizeHandle = handle;
+    resizeStartX = p.x;
+    resizeStartY = p.y;
+    resizeStartBbox = { ...block.bbox };
+    resizeStartPoints = (block.points || []).map(([px, py]) => [px, py]);
+    resizeStartBrushRadius = block.type === 'brush'
+      ? (block.brushRadius || brushRadius.value || 20)
+      : null;
+    isDragging = true;
+  }
+
+  function clearResizeState() {
+    resizeHandle = null;
+    resizeStartBbox = null;
+    resizeStartPoints = null;
+    resizeStartBrushRadius = null;
+  }
+
   function renderOverlays() {
     for (const id of selectedBlockIds.value) {
       const b = blocks.value.find(b2 => b2.id === id);
@@ -286,15 +344,13 @@ export function createCanvasManager(canvasEl) {
       ctx.setLineDash([4, 4]);
       ctx.strokeRect(b.bbox.x - 2, b.bbox.y - 2, b.bbox.w + 4, b.bbox.h + 4);
       ctx.setLineDash([]);
-      if (b.type === 'rect') {
-        const handles = getResizeHandles(b.bbox);
-        ctx.fillStyle = '#ffffff';
-        ctx.strokeStyle = '#4a90d9';
-        ctx.lineWidth = 1;
-        for (const h of Object.values(handles)) {
-          ctx.fillRect(h.x, h.y, h.w, h.h);
-          ctx.strokeRect(h.x, h.y, h.w, h.h);
-        }
+      const handles = getResizeHandles(b.bbox);
+      ctx.fillStyle = '#ffffff';
+      ctx.strokeStyle = '#4a90d9';
+      ctx.lineWidth = 1;
+      for (const h of Object.values(handles)) {
+        ctx.fillRect(h.x, h.y, h.w, h.h);
+        ctx.strokeRect(h.x, h.y, h.w, h.h);
       }
       ctx.restore();
     }
@@ -349,11 +405,10 @@ export function createCanvasManager(canvasEl) {
     if (tool === 'select') {
       if (selectedBlockIds.value.length === 1) {
         const selBlock = blocks.value.find(b => b.id === selectedBlockIds.value[0]);
-        if (selBlock && selBlock.type === 'rect') {
+        if (selBlock) {
           const handle = hitTestHandle(p.x, p.y, selBlock.bbox);
           if (handle) {
-            resizeHandle = handle; resizeStartX = p.x; resizeStartY = p.y;
-            resizeStartBbox = { ...selBlock.bbox }; isDragging = true;
+            beginBlockResize(selBlock, handle, p);
             return;
           }
         }
@@ -388,9 +443,7 @@ export function createCanvasManager(canvasEl) {
         if (selBlock && selBlock.type === 'rect') {
           const handle = hitTestHandle(p.x, p.y, selBlock.bbox);
           if (handle) {
-            history.snapshot();
-            resizeHandle = handle; resizeStartX = p.x; resizeStartY = p.y;
-            resizeStartBbox = { ...selBlock.bbox }; isDragging = true;
+            beginBlockResize(selBlock, handle, p);
             dragBlockId = selectedBlockIds.value[0];
             return;
           }
@@ -418,22 +471,15 @@ export function createCanvasManager(canvasEl) {
     const p = getPos(e);
     const tool = window.__currentTool || 'rect';
 
-    if (tool === 'select' && resizeHandle && resizeStartBbox) {
+    if ((tool === 'select' || tool === 'rect') && resizeHandle && resizeStartBbox) {
       const dx = p.x - resizeStartX, dy = p.y - resizeStartY;
-      const bbox = { ...resizeStartBbox };
-      const minSize = 10;
-      switch (resizeHandle) {
-        case 'nw': bbox.x = Math.min(bbox.x + dx, bbox.x + bbox.w - minSize); bbox.y = Math.min(bbox.y + dy, bbox.y + bbox.h - minSize); bbox.w = Math.max(minSize, bbox.w - dx); bbox.h = Math.max(minSize, bbox.h - dy); break;
-        case 'n': bbox.y = Math.min(bbox.y + dy, bbox.y + bbox.h - minSize); bbox.h = Math.max(minSize, bbox.h - dy); break;
-        case 'ne': bbox.y = Math.min(bbox.y + dy, bbox.y + bbox.h - minSize); bbox.w = Math.max(minSize, bbox.w + dx); bbox.h = Math.max(minSize, bbox.h - dy); break;
-        case 'e': bbox.w = Math.max(minSize, bbox.w + dx); break;
-        case 'se': bbox.w = Math.max(minSize, bbox.w + dx); bbox.h = Math.max(minSize, bbox.h + dy); break;
-        case 's': bbox.h = Math.max(minSize, bbox.h + dy); break;
-        case 'sw': bbox.x = Math.min(bbox.x + dx, bbox.x + bbox.w - minSize); bbox.w = Math.max(minSize, bbox.w - dx); bbox.h = Math.max(minSize, bbox.h + dy); break;
-        case 'w': bbox.x = Math.min(bbox.x + dx, bbox.x + bbox.w - minSize); bbox.w = Math.max(minSize, bbox.w - dx); break;
+      const bbox = bboxFromHandle(resizeStartBbox, resizeHandle, dx, dy);
+      const blockId = dragBlockId || selectedBlockIds.value[0];
+      const block = blocks.value.find(b => b.id === blockId);
+      if (block) {
+        applyBlockResize(block, resizeStartBbox, bbox, resizeStartPoints, resizeStartBrushRadius);
+        render();
       }
-      const block = blocks.value.find(b => b.id === selectedBlockIds.value[0]);
-      if (block) { block.bbox = bbox; if (block.type === 'rect') block.points = [[bbox.x, bbox.y], [bbox.x + bbox.w, bbox.y + bbox.h]]; render(); }
     } else if (tool === 'select' && dragBlockId) {
       const dx = p.x - dragStartX, dy = p.y - dragStartY;
       const ids = selectedBlockIds.value.includes(dragBlockId)
@@ -441,21 +487,6 @@ export function createCanvasManager(canvasEl) {
         : [dragBlockId];
       for (const id of ids) storeMoveBlock(id, dx, dy);
       dragStartX = p.x; dragStartY = p.y; render();
-    } else if (tool === 'rect' && resizeHandle && resizeStartBbox) {
-      const bbox = { ...resizeStartBbox };
-      const dx = p.x - resizeStartX, dy = p.y - resizeStartY, minSize = 10;
-      switch (resizeHandle) {
-        case 'nw': bbox.x = Math.min(bbox.x + dx, bbox.x + bbox.w - minSize); bbox.y = Math.min(bbox.y + dy, bbox.y + bbox.h - minSize); bbox.w = Math.max(minSize, bbox.w - dx); bbox.h = Math.max(minSize, bbox.h - dy); break;
-        case 'n': bbox.y = Math.min(bbox.y + dy, bbox.y + bbox.h - minSize); bbox.h = Math.max(minSize, bbox.h - dy); break;
-        case 'ne': bbox.y = Math.min(bbox.y + dy, bbox.y + bbox.h - minSize); bbox.w = Math.max(minSize, bbox.w + dx); bbox.h = Math.max(minSize, bbox.h - dy); break;
-        case 'e': bbox.w = Math.max(minSize, bbox.w + dx); break;
-        case 'se': bbox.w = Math.max(minSize, bbox.w + dx); bbox.h = Math.max(minSize, bbox.h + dy); break;
-        case 's': bbox.h = Math.max(minSize, bbox.h + dy); break;
-        case 'sw': bbox.x = Math.min(bbox.x + dx, bbox.x + bbox.w - minSize); bbox.w = Math.max(minSize, bbox.w - dx); bbox.h = Math.max(minSize, bbox.h + dy); break;
-        case 'w': bbox.x = Math.min(bbox.x + dx, bbox.x + bbox.w - minSize); bbox.w = Math.max(minSize, bbox.w - dx); break;
-      }
-      const block = blocks.value.find(b => b.id === dragBlockId);
-      if (block) { block.bbox = bbox; if (block.type === 'rect') block.points = [[bbox.x, bbox.y], [bbox.x + bbox.w, bbox.y + bbox.h]]; render(); }
     } else if (tool === 'rect' && dragRectPreview) {
       let dx = p.x - dragRectPreview.x, dy = p.y - dragRectPreview.y;
       if (e.shiftKey) { const size = Math.max(Math.abs(dx), Math.abs(dy)); dx = (dx >= 0 ? 1 : -1) * size; dy = (dy >= 0 ? 1 : -1) * size; }
@@ -511,9 +542,10 @@ export function createCanvasManager(canvasEl) {
     isDragging = false;
     const tool = window.__currentTool || 'rect';
 
-    if (tool === 'select' && resizeHandle) { resizeHandle = null; resizeStartBbox = null; }
-    else if (tool === 'rect' && resizeHandle && dragBlockId) { resizeHandle = null; resizeStartBbox = null; dragBlockId = null; }
-    else if (tool === 'rect' && dragRectPreview) {
+    if ((tool === 'select' || tool === 'rect') && resizeHandle) {
+      clearResizeState();
+      dragBlockId = null;
+    } else if (tool === 'rect' && dragRectPreview) {
       const { x, y, w, h } = dragRectPreview;
       if (Math.abs(w) > 2 && Math.abs(h) > 2) {
         const px = Math.round(Math.max(0, Math.min(x, x + w)));
