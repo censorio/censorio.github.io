@@ -11,7 +11,7 @@ function loadLang() {
     const saved = localStorage.getItem(LS_LANG_KEY);
     if (saved === 'en' || saved === 'ru') return saved;
   } catch { /* ignore */ }
-  return 'en';
+  return 'ru';
 }
 
 let lang = loadLang();

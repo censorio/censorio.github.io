@@ -124,17 +124,33 @@ body {
   gap: 8px;
   margin-left: auto;
 }
-.topbar .theme-toggle {
+.theme-toggle {
+  display: inline-flex;
   width: 42px;
   min-width: 42px;
   height: 36px;
   padding: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--btn-bg);
+  color: var(--text);
+  cursor: pointer;
   justify-content: center;
   align-items: center;
   line-height: 1;
   overflow: hidden;
+  appearance: none;
+  -webkit-appearance: none;
+  transition: transform 0.1s;
 }
-.topbar .theme-toggle .theme-icon {
+.theme-toggle:hover {
+  background: var(--hover-bg);
+}
+.theme-toggle:active {
+  transform: scale(0.97);
+}
+.theme-toggle .theme-icon {
   display: block;
   width: 16px;
   height: 16px;
@@ -142,7 +158,7 @@ body {
   font-size: 16px;
   text-align: center;
 }
-.topbar .lang-toggle {
+.lang-toggle {
   display: inline-flex;
   height: 36px;
   border: 1px solid var(--border);
@@ -150,27 +166,41 @@ body {
   overflow: hidden;
   flex-shrink: 0;
 }
-.topbar .lang-toggle button {
+.lang-toggle button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   height: 100%;
   min-width: 36px;
   padding: 0 10px;
+  box-sizing: border-box;
   border: none;
   border-radius: 0;
   background: var(--btn-bg);
   color: var(--text);
+  cursor: pointer;
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.02em;
+  appearance: none;
+  -webkit-appearance: none;
 }
-.topbar .lang-toggle button.active {
+.lang-toggle button:hover {
+  background: var(--hover-bg);
+}
+.lang-toggle button.active {
   background: var(--accent);
   color: #fff;
 }
-.topbar .lang-toggle button + button {
+.lang-toggle button.active:hover {
+  background: var(--accent);
+  color: #fff;
+}
+.lang-toggle button + button {
   border-left: 1px solid var(--border);
 }
-.topbar .lang-toggle button.active + button,
-.topbar .lang-toggle button + button.active {
+.lang-toggle button.active + button,
+.lang-toggle button + button.active {
   border-left-color: transparent;
 }
 .topbar .sep {
@@ -583,6 +613,25 @@ body {
 .about-modal {
   min-width: 360px;
   max-width: 580px;
+  padding: 12px 24px 24px;
+}
+.about-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.about-modal-header h2 {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+}
+.about-modal-toggles {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
 .about-body {
   display: flex;
@@ -600,7 +649,6 @@ body {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  margin-bottom: 20px;
   font-size: 13px;
   color: var(--text);
   cursor: pointer;

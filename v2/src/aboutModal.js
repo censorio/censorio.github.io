@@ -9,7 +9,7 @@ export const LS_HIDE_ABOUT_KEY = 'censorio-hide-about';
 
 export function shouldShowAboutOnStartup() {
   try {
-    return localStorage.getItem(LS_HIDE_ABOUT_KEY) !== '1';
+    return Boolean(localStorage.getItem(LS_HIDE_ABOUT_KEY)) === false;
   } catch {
     return true;
   }
@@ -17,7 +17,7 @@ export function shouldShowAboutOnStartup() {
 
 export function getHideAbout() {
   try {
-    return localStorage.getItem(LS_HIDE_ABOUT_KEY) === '1';
+    return Boolean(localStorage.getItem(LS_HIDE_ABOUT_KEY));
   } catch {
     return false;
   }
@@ -25,12 +25,12 @@ export function getHideAbout() {
 
 export function setHideAbout(hide) {
   try {
-    if (hide) localStorage.setItem(LS_HIDE_ABOUT_KEY, '1');
+    if (hide) localStorage.setItem(LS_HIDE_ABOUT_KEY, true);
     else localStorage.removeItem(LS_HIDE_ABOUT_KEY);
   } catch { /* ignore */ }
 }
 
-export function AboutModal({ onClose }) {
+export function AboutModal({ onClose, lang, theme, onLangEn, onLangRu, onToggleTheme }) {
   const [hide, setHide] = useState(() => getHideAbout());
 
   function onHideChange(e) {
@@ -52,7 +52,29 @@ export function AboutModal({ onClose }) {
         aria-modal="true"
         onMouseDown=${(e) => e.stopPropagation()}
       >
-        <h2>${t('about')} ${t('appName')}</h2>
+        <div class="about-modal-header">
+          <h2>${t('about')} ${t('appName')}</h2>
+          <div class="about-modal-toggles">
+            <div class="lang-toggle" title=${t('langTitle')}>
+              <button
+                type="button"
+                class="${lang === 'en' ? 'active' : ''}"
+                onClick=${onLangEn}
+              >${t('langEn')}</button>
+              <button
+                type="button"
+                class="${lang === 'ru' ? 'active' : ''}"
+                onClick=${onLangRu}
+              >${t('langRu')}</button>
+            </div>
+            <button
+              type="button"
+              class="theme-toggle"
+              title=${theme === 'dark' ? t('lightTheme') : t('darkTheme')}
+              onClick=${onToggleTheme}
+            ><span class="theme-icon">${theme === 'dark' ? '☀' : '☾'}</span></button>
+          </div>
+        </div>
         <div class="about-body">
           <img src="assets/preview.png" alt=""  />
           <p>${t('appName')} ${t('aboutP1')}</p>

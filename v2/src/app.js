@@ -648,7 +648,14 @@ function App() {
     `}
 
     ${showAbout && html`
-      <${AboutModal} onClose=${closeAbout} />
+      <${AboutModal}
+        onClose=${closeAbout}
+        lang=${lang}
+        theme=${theme}
+        onLangEn=${setLangEn}
+        onLangRu=${setLangRu}
+        onToggleTheme=${toggleTheme}
+      />
     `}
 
     <${DialogHost} />
