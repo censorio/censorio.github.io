@@ -257,7 +257,9 @@ body {
   transform: translateX(-50%);
   background: transparent;
   border-radius: 1px;
-  transition: background 0.15s ease, opacity 0.15s ease;
+  transition:
+    background 0.15s ease,
+    opacity 0.15s ease;
   opacity: 0;
   pointer-events: none;
 }
@@ -709,7 +711,7 @@ body {
   justify-content: center;
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: #000;
+  background: #333;
 }
 
 .crop-canvas-container canvas {

@@ -181,6 +181,9 @@ function App() {
         if (x == null) setCursorPos(null);
         else setCursorPos({ x, y });
       });
+      canvasManager.setImageChangeListener(() => {
+        saveImageSession();
+      });
       if (!sessionRestoredRef.current) {
         sessionRestoredRef.current = true;
         restoreSession();
@@ -476,7 +479,7 @@ function App() {
 
   async function applyCrop({ top, bottom, left, right }) {
     if (canvasManager) {
-      history.snapshot();
+      history.snapshot({ imageDataUrl: canvasManager.getImageDataUrl() });
       await canvasManager.cropImage(left, top, right, bottom);
       saveImageSession();
       saveBlocksSession();

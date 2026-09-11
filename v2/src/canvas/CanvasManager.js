@@ -22,6 +22,7 @@ export function createCanvasManager(canvasEl) {
 
   let sourceImage = null;
   let cursorListener = null;
+  let imageChangeListener = null;
 
   const sourceCanvas = document.createElement('canvas');
   const sourceCtx = sourceCanvas.getContext('2d');
@@ -695,14 +696,48 @@ export function createCanvasManager(canvasEl) {
       for (const id of [...selectedBlockIds.value]) removeBlock(id);
       selectedBlockIds.value = []; render();
     }
-    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'z') { e.preventDefault(); if (history.canRedo()) { history.redo(); render(); } }
-    else if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); if (history.canUndo()) { history.undo(); render(); } }
-    else if ((e.ctrlKey || e.metaKey) && e.key === 'y') { e.preventDefault(); if (history.canRedo()) { history.redo(); render(); } }
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'z') { e.preventDefault(); undo(); }
+    else if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); undo(); }
+    else if ((e.ctrlKey || e.metaKey) && e.key === 'y') { e.preventDefault(); redo(); }
     else if ((e.ctrlKey || e.metaKey) && e.key === 'd') { e.preventDefault(); if (selectedBlockIds.value.length > 0) { history.snapshot(); for (const id of [...selectedBlockIds.value]) { duplicateBlock(id); } render(); } }
   }
 
-  function undo() { if (history.canUndo()) { history.undo(); render(); } }
-  function redo() { if (history.canRedo()) { history.redo(); render(); } }
+  function getImageDataUrl() {
+    if (!sourceImage) return null;
+    const c = document.createElement('canvas');
+    c.width = sourceImage.naturalWidth || sourceImage.width;
+    c.height = sourceImage.naturalHeight || sourceImage.height;
+    const cctx = c.getContext('2d');
+    cctx.drawImage(sourceImage, 0, 0);
+    return c.toDataURL('image/png');
+  }
+
+  function restoreImageFromDataUrl(dataUrl) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        loadImage(img, { preserveBlocks: true });
+        if (imageChangeListener) imageChangeListener();
+        resolve();
+      };
+      img.onerror = reject;
+      img.src = dataUrl;
+    });
+  }
+
+  async function undo() {
+    if (!history.canUndo()) return false;
+    const ok = await history.undo(getImageDataUrl, restoreImageFromDataUrl);
+    if (ok) render();
+    return ok;
+  }
+
+  async function redo() {
+    if (!history.canRedo()) return false;
+    const ok = await history.redo(getImageDataUrl, restoreImageFromDataUrl);
+    if (ok) render();
+    return ok;
+  }
 
   function cropImage(left, top, right, bottom) {
     if (!sourceImage || !canvasEl) return Promise.resolve();
@@ -935,8 +970,10 @@ export function createCanvasManager(canvasEl) {
     cropImage,
     getCanvas: () => canvasEl,
     getSourceImage: () => sourceImage,
+    getImageDataUrl,
     fitToContainer,
     setCursorListener: (fn) => { cursorListener = fn; },
+    setImageChangeListener: (fn) => { imageChangeListener = fn; },
     destroy: () => {
       window.removeEventListener('resize', onResize);
       window.removeEventListener('click', hideContextMenu);

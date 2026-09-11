@@ -1,46 +1,73 @@
 import { restoreSnapshot, serializeBlocks } from './store.js';
 
 /**
+ * @typedef {{ blocks: string, imageDataUrl: string|null }} HistoryEntry
+ */
+
+/**
  * Undo/Redo history manager.
- * Stores snapshots of block states.
+ * Stores block snapshots; optionally stores image data URLs for crop undo.
  */
 class HistoryManager {
   constructor() {
-    /** @type {string[]} */
+    /** @type {HistoryEntry[]} */
     this.undoStack = [];
-    /** @type {string[]} */
+    /** @type {HistoryEntry[]} */
     this.redoStack = [];
   }
 
   /**
    * Save current state before a change.
+   * Pass imageDataUrl when the upcoming change will replace the source image (e.g. crop).
+   * @param {{ imageDataUrl?: string|null }} [opts]
    */
-  snapshot() {
-    this.undoStack.push(serializeBlocks());
+  snapshot(opts = {}) {
+    this.undoStack.push({
+      blocks: serializeBlocks(),
+      imageDataUrl: opts.imageDataUrl ?? null,
+    });
     this.redoStack = [];
   }
 
   /**
    * Undo the last action. Returns true if successful.
-   * @returns {boolean}
+   * When the restored entry includes an image, captureImage/restoreImage are used
+   * so redo can put the cropped (or otherwise changed) image back.
+   * @param {() => string|null} [captureImage]
+   * @param {(dataUrl: string) => Promise<void>|void} [restoreImage]
+   * @returns {Promise<boolean>}
    */
-  undo() {
+  async undo(captureImage, restoreImage) {
     if (this.undoStack.length === 0) return false;
-    this.redoStack.push(serializeBlocks());
-    const prev = /** @type {string} */ (this.undoStack.pop());
-    restoreSnapshot(prev);
+    const prev = /** @type {HistoryEntry} */ (this.undoStack.pop());
+    this.redoStack.push({
+      blocks: serializeBlocks(),
+      imageDataUrl: prev.imageDataUrl != null && captureImage ? captureImage() : null,
+    });
+    restoreSnapshot(prev.blocks);
+    if (prev.imageDataUrl != null && restoreImage) {
+      await restoreImage(prev.imageDataUrl);
+    }
     return true;
   }
 
   /**
    * Redo the last undone action. Returns true if successful.
-   * @returns {boolean}
+   * @param {() => string|null} [captureImage]
+   * @param {(dataUrl: string) => Promise<void>|void} [restoreImage]
+   * @returns {Promise<boolean>}
    */
-  redo() {
+  async redo(captureImage, restoreImage) {
     if (this.redoStack.length === 0) return false;
-    this.undoStack.push(serializeBlocks());
-    const next = /** @type {string} */ (this.redoStack.pop());
-    restoreSnapshot(next);
+    const next = /** @type {HistoryEntry} */ (this.redoStack.pop());
+    this.undoStack.push({
+      blocks: serializeBlocks(),
+      imageDataUrl: next.imageDataUrl != null && captureImage ? captureImage() : null,
+    });
+    restoreSnapshot(next.blocks);
+    if (next.imageDataUrl != null && restoreImage) {
+      await restoreImage(next.imageDataUrl);
+    }
     return true;
   }
 
