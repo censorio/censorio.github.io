@@ -36,6 +36,24 @@ let canvasManager = null;
 const LS_BLOCKS_KEY = 'censorio-blocks';
 const LS_IMAGE_KEY = 'censorio-image-data';
 const LS_THEME_KEY = 'censorio-theme';
+const LS_SIDEBAR_WIDTH_KEY = 'censorio-sidebar-width';
+const SIDEBAR_DEFAULT_WIDTH = 250;
+const SIDEBAR_MIN_WIDTH = 200;
+const SIDEBAR_MAX_WIDTH = 500;
+/** Below this, tool grid uses short labels (e.g. «Прямоуг.»). */
+const SIDEBAR_COMPACT_LABELS_MAX = 240;
+
+function clampSidebarWidth(w) {
+  return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(w)));
+}
+
+function loadSidebarWidth() {
+  try {
+    const n = parseInt(localStorage.getItem(LS_SIDEBAR_WIDTH_KEY), 10);
+    if (Number.isFinite(n)) return clampSidebarWidth(n);
+  } catch { /* ignore */ }
+  return SIDEBAR_DEFAULT_WIDTH;
+}
 
 function onCanvasRef(el) {
   if (el && !canvasManager) {
@@ -103,9 +121,12 @@ function App() {
     return next;
   });
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth);
+  const [isResizingSidebar, setIsResizingSidebar] = useState(false);
   const intensityTimeoutRef = useRef(null);
   const toastTimerRef = useRef(null);
   const sessionRestoredRef = useRef(false);
+  const sidebarResizeRef = useRef(null);
 
   function showToast(message) {
     setToast(message);
@@ -336,6 +357,35 @@ function App() {
     setSidebarOpen(false);
   }
 
+  function onSidebarResizePointerDown(e) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    sidebarResizeRef.current = { startX: e.clientX, startW: sidebarWidth };
+    setIsResizingSidebar(true);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }
+
+  function onSidebarResizePointerMove(e) {
+    const drag = sidebarResizeRef.current;
+    if (!drag) return;
+    const next = clampSidebarWidth(drag.startW + (e.clientX - drag.startX));
+    drag.currentW = next;
+    setSidebarWidth(next);
+  }
+
+  function onSidebarResizePointerUp() {
+    const drag = sidebarResizeRef.current;
+    if (!drag) return;
+    sidebarResizeRef.current = null;
+    setIsResizingSidebar(false);
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    const next = drag.currentW ?? sidebarWidth;
+    try { localStorage.setItem(LS_SIDEBAR_WIDTH_KEY, String(next)); } catch { /* ignore */ }
+  }
+
   function handleUndo() {
     if (canvasManager) canvasManager.undo();
   }
@@ -482,6 +532,7 @@ function App() {
     : selCount > 1
       ? t('styleSelectedBlocks')
       : '';
+  const compactToolLabels = sidebarWidth < SIDEBAR_COMPACT_LABELS_MAX;
 
   return html`
     <div class="topbar">
@@ -523,7 +574,18 @@ function App() {
 
     <div class="main">
       ${sidebarOpen && html`<div class="sidebar-backdrop" onClick=${closeSidebar}></div>`}
-      <div class="sidebar ${sidebarOpen ? 'open' : ''}">
+      <div
+        class="sidebar ${sidebarOpen ? 'open' : ''} ${isResizingSidebar ? 'resizing' : ''}"
+        style=${{ '--sidebar-width': `${sidebarWidth}px` }}
+      >
+        <div
+          class="sidebar-resize"
+          title=${t('resizeSidebar')}
+          onPointerDown=${onSidebarResizePointerDown}
+          onPointerMove=${onSidebarResizePointerMove}
+          onPointerUp=${onSidebarResizePointerUp}
+          onPointerCancel=${onSidebarResizePointerUp}
+        ></div>
         <div>
           <h3>${t('tools')}</h3>
           <div class="tool-btns">
@@ -531,8 +593,25 @@ function App() {
               <button
                 class="tool-btn ${currentTool.value === id ? 'active' : ''}"
                 onClick=${() => selectTool(id)}
-              >${toolLabel(id)}</button>
+              >${toolLabel(id, { compact: compactToolLabels })}</button>
             `)}
+          </div>
+        </div>
+
+        <div>
+          <h3>${t('mode')}</h3>
+          <div class="style-toggle">
+            <button
+              class="${brushMode.value === 'draw' ? 'active' : ''}"
+              onClick=${setModeDraw}
+            >${t('draw')}</button>
+            <button
+              class="${brushMode.value === 'erase' ? 'active' : ''}"
+              onClick=${setModeErase}
+            >${t('erase')}</button>
+          </div>
+          <div class="intensity-val" style=${{ marginTop: '4px' }}>
+            ${brushMode.value === 'erase' ? t('modeEraseHint') : t('modeDrawHint')}
           </div>
         </div>
 
@@ -555,23 +634,6 @@ function App() {
             onChange=${onIntensityCommit}
           />
           <div class="intensity-val">${t('intensity')}: ${blockIntensity}/5</div>
-        </div>
-
-        <div>
-          <h3>${t('mode')}</h3>
-          <div class="style-toggle">
-            <button
-              class="${brushMode.value === 'draw' ? 'active' : ''}"
-              onClick=${setModeDraw}
-            >${t('draw')}</button>
-            <button
-              class="${brushMode.value === 'erase' ? 'active' : ''}"
-              onClick=${setModeErase}
-            >${t('erase')}</button>
-          </div>
-          <div class="intensity-val" style=${{ marginTop: '4px' }}>
-            ${brushMode.value === 'erase' ? t('modeEraseHint') : t('modeDrawHint')}
-          </div>
         </div>
 
         <div>

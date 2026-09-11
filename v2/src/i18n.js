@@ -54,7 +54,9 @@ const dict = {
     clearAll: 'Clear All',
     tools: 'Tools',
     toolsMenu: 'Tools',
-    toolRect: 'Rect',
+    resizeSidebar: 'Resize panel',
+    toolRect: 'Rectangle',
+    toolRectShort: 'Rect',
     toolBrush: 'Brush',
     toolLasso: 'Lasso',
     toolSelect: 'Select',
@@ -136,7 +138,9 @@ const dict = {
     clearAll: 'Очистить',
     tools: 'Инструменты',
     toolsMenu: 'Инструменты',
-    toolRect: 'Прямоуг.',
+    resizeSidebar: 'Изменить ширину панели',
+    toolRect: 'Прямоугольник',
+    toolRectShort: 'Прямоуг.',
     toolBrush: 'Кисть',
     toolLasso: 'Лассо',
     toolSelect: 'Выбор',
@@ -221,9 +225,11 @@ export function t(key, vars) {
   return text;
 }
 
-export function toolLabel(id) {
+/** @param {string} id
+ *  @param {{ compact?: boolean }} [opts] — compact: shorter labels for narrow tool grid */
+export function toolLabel(id, opts = {}) {
   const map = {
-    rect: 'toolRect',
+    rect: opts.compact ? 'toolRectShort' : 'toolRect',
     brush: 'toolBrush',
     lasso: 'toolLasso',
     select: 'toolSelect',
