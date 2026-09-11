@@ -350,7 +350,35 @@ export function createCanvasManager(canvasEl) {
     resizeStartBrushRadius = block.type === 'brush'
       ? (block.brushRadius || brushRadius.value || 20)
       : null;
+    startPointerDrag();
+  }
+
+  /** Track move/up on document so drawing continues when cursor leaves the canvas. */
+  function bindDragListeners() {
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    document.addEventListener('touchmove', onDocTouchMove, { passive: false });
+    document.addEventListener('touchend', onUp);
+    document.addEventListener('touchcancel', onUp);
+  }
+
+  function unbindDragListeners() {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    document.removeEventListener('touchmove', onDocTouchMove);
+    document.removeEventListener('touchend', onUp);
+    document.removeEventListener('touchcancel', onUp);
+  }
+
+  function onDocTouchMove(e) {
+    e.preventDefault();
+    onMove(e);
+  }
+
+  function startPointerDrag() {
+    if (isDragging) return;
     isDragging = true;
+    bindDragListeners();
   }
 
   function clearResizeState() {
@@ -460,7 +488,7 @@ export function createCanvasManager(canvasEl) {
         } else {
           dragBlockId = hit;
         }
-        isDragging = true; dragStartX = p.x; dragStartY = p.y;
+        startPointerDrag(); dragStartX = p.x; dragStartY = p.y;
         render();
       } else { selectBlock(null); render(); }
     } else if (tool === 'rect') {
@@ -477,18 +505,19 @@ export function createCanvasManager(canvasEl) {
       }
       history.snapshot(); selectBlock(null);
       dragRectPreview = { x: Math.round(p.x), y: Math.round(p.y), w: 0, h: 0 };
-      isDragging = true;
+      startPointerDrag();
     } else if (tool === 'brush') {
       history.snapshot(); selectBlock(null);
       ensureEffectLayer(styleMode.value, intensity.value);
       render();
       brushPoints = [{ x: p.x, y: p.y }];
-      isBrushDrawing = true; isDragging = true;
+      isBrushDrawing = true;
+      startPointerDrag();
       stampBrushPoint(p.x, p.y);
     } else if (tool === 'lasso') {
       history.snapshot(); selectBlock(null);
       dragToolData = [[Math.round(p.x), Math.round(p.y)]];
-      isDragging = true;
+      startPointerDrag();
     }
   }
 
@@ -564,6 +593,7 @@ export function createCanvasManager(canvasEl) {
   function onUp() {
     if (!isDragging) return;
     isDragging = false;
+    unbindDragListeners();
     const tool = window.__currentTool || 'rect';
 
     if ((tool === 'select' || tool === 'rect') && resizeHandle) {
@@ -849,13 +879,7 @@ export function createCanvasManager(canvasEl) {
   }
 
   canvasEl.addEventListener('mousedown', onDown);
-  canvasEl.addEventListener('mousemove', onMove);
-  canvasEl.addEventListener('mouseup', onUp);
-  canvasEl.addEventListener('mouseleave', onUp);
-
   canvasEl.addEventListener('touchstart', (e) => { e.preventDefault(); onDown(e); }, { passive: false });
-  canvasEl.addEventListener('touchmove', (e) => { e.preventDefault(); onMove(e); }, { passive: false });
-  canvasEl.addEventListener('touchend', (e) => { onUp(e); });
 
   canvasEl.addEventListener('mousemove', onCanvasMove);
   canvasEl.addEventListener('mousemove', reportCursor);
@@ -975,6 +999,7 @@ export function createCanvasManager(canvasEl) {
     setCursorListener: (fn) => { cursorListener = fn; },
     setImageChangeListener: (fn) => { imageChangeListener = fn; },
     destroy: () => {
+      unbindDragListeners();
       window.removeEventListener('resize', onResize);
       window.removeEventListener('click', hideContextMenu);
       hideContextMenu();
