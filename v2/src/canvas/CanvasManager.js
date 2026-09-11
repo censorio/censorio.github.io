@@ -157,14 +157,24 @@ export function createCanvasManager(canvasEl) {
     return 40;
   }
 
-  function render() {
-    if (!sourceImage) return;
+  /**
+   * Full scene without overlays. Must clear first: drawImage of a
+   * transparent PNG does not erase previous pixels in alpha=0 areas,
+   * so tool previews would otherwise accumulate (blue dashed ghosts).
+   */
+  function paintBase() {
     ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
+    if (!sourceImage) return;
     ctx.drawImage(sourceImage, 0, 0);
     for (const block of blocks.value) {
       if (!block.visible) continue;
       renderBlock(block);
     }
+  }
+
+  function render() {
+    if (!sourceImage) return;
+    paintBase();
     renderOverlays();
   }
 
@@ -192,6 +202,9 @@ export function createCanvasManager(canvasEl) {
         ctx.beginPath();
         ctx.rect(x, y, w, h);
         ctx.clip();
+        // Replace pixels (incl. alpha). source-over would keep the sharp
+        // original silhouette where effect alpha < 255.
+        ctx.globalCompositeOperation = 'copy';
         ctx.drawImage(region.canvas, region.x, region.y);
         ctx.restore();
       }
@@ -216,10 +229,16 @@ export function createCanvasManager(canvasEl) {
         const rw = Math.min(canvasEl.width - rx, Math.ceil(bbox.w + (bbox.x - rx) + pad));
         const rh = Math.min(canvasEl.height - ry, Math.ceil(bbox.h + (bbox.y - ry) + pad));
         const region = ensureRegionEffect(block.style, block.intensity, rx, ry, rw, rh);
-        if (region) ctx.drawImage(region.canvas, region.x, region.y);
+        if (region) {
+          ctx.globalCompositeOperation = 'copy';
+          ctx.drawImage(region.canvas, region.x, region.y);
+        }
       } else {
         const layer = ensureEffectLayer(block.style, block.intensity);
-        if (layer) ctx.drawImage(layer, 0, 0);
+        if (layer) {
+          ctx.globalCompositeOperation = 'copy';
+          ctx.drawImage(layer, 0, 0);
+        }
       }
       ctx.restore();
     } else if (type === 'lasso') {
@@ -239,10 +258,16 @@ export function createCanvasManager(canvasEl) {
         const rw = Math.min(canvasEl.width - rx, Math.ceil(bbox.w + (bbox.x - rx) + pad));
         const rh = Math.min(canvasEl.height - ry, Math.ceil(bbox.h + (bbox.y - ry) + pad));
         const region = ensureRegionEffect(block.style, block.intensity, rx, ry, rw, rh);
-        if (region) ctx.drawImage(region.canvas, region.x, region.y);
+        if (region) {
+          ctx.globalCompositeOperation = 'copy';
+          ctx.drawImage(region.canvas, region.x, region.y);
+        }
       } else {
         const layer = ensureEffectLayer(block.style, block.intensity);
-        if (layer) ctx.drawImage(layer, 0, 0);
+        if (layer) {
+          ctx.globalCompositeOperation = 'copy';
+          ctx.drawImage(layer, 0, 0);
+        }
       }
       ctx.restore();
     }
@@ -491,8 +516,7 @@ export function createCanvasManager(canvasEl) {
       let dx = p.x - dragRectPreview.x, dy = p.y - dragRectPreview.y;
       if (e.shiftKey) { const size = Math.max(Math.abs(dx), Math.abs(dy)); dx = (dx >= 0 ? 1 : -1) * size; dy = (dy >= 0 ? 1 : -1) * size; }
       dragRectPreview.w = dx; dragRectPreview.h = dy;
-      ctx.drawImage(sourceImage, 0, 0);
-      for (const block of blocks.value) { if (!block.visible) continue; renderBlock(block); }
+      paintBase();
       // Live erase preview: restore original inside pending rect
       if (brushMode.value === 'erase') {
         const rx = Math.min(dragRectPreview.x, dragRectPreview.x + dragRectPreview.w);
@@ -521,8 +545,7 @@ export function createCanvasManager(canvasEl) {
       }
     } else if (tool === 'lasso' && dragToolData) {
       dragToolData.push([Math.round(p.x), Math.round(p.y)]);
-      ctx.drawImage(sourceImage, 0, 0);
-      for (const block of blocks.value) { if (!block.visible) continue; renderBlock(block); }
+      paintBase();
       if (brushMode.value === 'erase' && dragToolData.length > 2) {
         ctx.save();
         ctx.beginPath();
@@ -623,6 +646,7 @@ export function createCanvasManager(canvasEl) {
     ctx.beginPath();
     ctx.arc(x, y, r, 0, Math.PI * 2);
     ctx.clip();
+    if (!erase) ctx.globalCompositeOperation = 'copy';
     ctx.drawImage(layer, sx, sy, tw, th, sx, sy, tw, th);
     ctx.restore();
   }
@@ -817,8 +841,7 @@ export function createCanvasManager(canvasEl) {
     if (isBrushDrawing) return;
     const p = getPos(e);
     brushCursorX = p.x; brushCursorY = p.y;
-    ctx.drawImage(sourceImage, 0, 0);
-    for (const block of blocks.value) { if (!block.visible) continue; renderBlock(block); }
+    paintBase();
     renderOverlays();
     drawBrushLivePreview(p.x, p.y);
   }
@@ -864,7 +887,10 @@ export function createCanvasManager(canvasEl) {
         sourceCtx.rect(r.x, r.y, r.w, r.h);
         sourceCtx.clip();
         if (erase) sourceCtx.drawImage(sourceImage, r.x, r.y, r.w, r.h, r.x, r.y, r.w, r.h);
-        else if (layer) sourceCtx.drawImage(layer, r.x, r.y, r.w, r.h, r.x, r.y, r.w, r.h);
+        else if (layer) {
+          sourceCtx.globalCompositeOperation = 'copy';
+          sourceCtx.drawImage(layer, r.x, r.y, r.w, r.h, r.x, r.y, r.w, r.h);
+        }
       } else if (type === 'brush') {
         sourceCtx.beginPath();
         for (const pt of points) {
@@ -874,7 +900,10 @@ export function createCanvasManager(canvasEl) {
         }
         sourceCtx.clip();
         if (erase) sourceCtx.drawImage(sourceImage, 0, 0);
-        else if (layer) sourceCtx.drawImage(layer, 0, 0);
+        else if (layer) {
+          sourceCtx.globalCompositeOperation = 'copy';
+          sourceCtx.drawImage(layer, 0, 0);
+        }
       } else if (points?.length) {
         sourceCtx.beginPath();
         sourceCtx.moveTo(points[0][0], points[0][1]);
@@ -882,7 +911,10 @@ export function createCanvasManager(canvasEl) {
         sourceCtx.closePath();
         sourceCtx.clip();
         if (erase) sourceCtx.drawImage(sourceImage, 0, 0);
-        else if (layer) sourceCtx.drawImage(layer, bbox.x, bbox.y, bbox.w, bbox.h, bbox.x, bbox.y, bbox.w, bbox.h);
+        else if (layer) {
+          sourceCtx.globalCompositeOperation = 'copy';
+          sourceCtx.drawImage(layer, bbox.x, bbox.y, bbox.w, bbox.h, bbox.x, bbox.y, bbox.w, bbox.h);
+        }
       }
       sourceCtx.restore();
     }

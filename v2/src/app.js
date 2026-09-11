@@ -60,8 +60,18 @@ function saveImageSession() {
     const c = document.createElement('canvas');
     c.width = src.naturalWidth || src.width;
     c.height = src.naturalHeight || src.height;
-    c.getContext('2d').drawImage(src, 0, 0);
-    localStorage.setItem(LS_IMAGE_KEY, c.toDataURL('image/jpeg', 0.92));
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(src, 0, 0);
+    // JPEG has no alpha — transparent pixels become black on restore.
+    const { data } = ctx.getImageData(0, 0, c.width, c.height);
+    let hasAlpha = false;
+    for (let i = 3; i < data.length; i += 4) {
+      if (data[i] < 255) { hasAlpha = true; break; }
+    }
+    localStorage.setItem(
+      LS_IMAGE_KEY,
+      hasAlpha ? c.toDataURL('image/png') : c.toDataURL('image/jpeg', 0.92)
+    );
   } catch {
     try { localStorage.removeItem(LS_IMAGE_KEY); } catch { /* ignore */ }
   }
