@@ -123,10 +123,10 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth);
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
-  const intensityTimeoutRef = useRef(null);
   const toastTimerRef = useRef(null);
   const sessionRestoredRef = useRef(false);
   const sidebarResizeRef = useRef(null);
+  const sliderTipRef = useRef(null);
 
   function showToast(message) {
     setToast(message);
@@ -312,16 +312,6 @@ function App() {
     setBlockStyle(newStyle);
   }
 
-  function handleIntensityChange(newValue) {
-    // Local UI only while dragging — avoid store notify + full re-render each step
-    setBlockIntensity(newValue);
-    if (intensityTimeoutRef.current) clearTimeout(intensityTimeoutRef.current);
-    intensityTimeoutRef.current = setTimeout(() => {
-      intensityTimeoutRef.current = null;
-      commitIntensity(newValue);
-    }, 120);
-  }
-
   function commitIntensity(newValue) {
     if (intensity.value !== newValue) intensity.value = newValue;
     const ids = selectedBlockIds.value;
@@ -425,16 +415,9 @@ function App() {
     handleStyleChange('pixelate');
   }
 
-  function onIntensityInput(e) {
-    handleIntensityChange(+e.target.value);
-  }
-
-  function onIntensityCommit(e) {
-    if (intensityTimeoutRef.current) {
-      clearTimeout(intensityTimeoutRef.current);
-      intensityTimeoutRef.current = null;
-    }
-    commitIntensity(+e.target.value);
+  function selectIntensity(newValue) {
+    setBlockIntensity(newValue);
+    commitIntensity(newValue);
   }
 
   function setModeDraw() {
@@ -445,12 +428,74 @@ function App() {
     brushMode.value = 'erase';
   }
 
+  function clampParam(value, min, max) {
+    const n = Math.round(Number(value));
+    if (!Number.isFinite(n)) return min;
+    return Math.min(max, Math.max(min, n));
+  }
+
   function onBrushRadiusInput(e) {
-    brushRadius.value = +e.target.value;
+    brushRadius.value = clampParam(e.target.value, 5, 100);
   }
 
   function onBrushHardnessInput(e) {
-    brushHardness.value = +e.target.value;
+    brushHardness.value = clampParam(e.target.value, 0, 100);
+  }
+
+  function onBrushRadiusNumInput(e) {
+    if (e.target.value === '' || e.target.value === '-') return;
+    brushRadius.value = clampParam(e.target.value, 5, 100);
+  }
+
+  function onBrushRadiusNumChange(e) {
+    brushRadius.value = clampParam(e.target.value === '' ? 5 : e.target.value, 5, 100);
+  }
+
+  function onBrushHardnessNumInput(e) {
+    if (e.target.value === '' || e.target.value === '-') return;
+    brushHardness.value = clampParam(e.target.value, 0, 100);
+  }
+
+  function onBrushHardnessNumChange(e) {
+    brushHardness.value = clampParam(e.target.value === '' ? 0 : e.target.value, 0, 100);
+  }
+
+  function valueAtSliderPointer(slider, clientX) {
+    const min = Number(slider.min);
+    const max = Number(slider.max);
+    const step = Number(slider.step) || 1;
+    const rect = slider.getBoundingClientRect();
+    // Match browser mapping: value spans (trackWidth - thumbWidth), not full width
+    const thumb = 14;
+    const usable = Math.max(1, rect.width - thumb);
+    const x = clientX - rect.left - thumb / 2;
+    const ratio = Math.min(1, Math.max(0, x / usable));
+    const raw = min + ratio * (max - min);
+    const stepped = Math.round(raw / step) * step;
+    return Math.min(max, Math.max(min, stepped));
+  }
+
+  function showSliderTip(clientX, clientY, text) {
+    const tip = sliderTipRef.current;
+    if (!tip) return;
+    tip.textContent = text;
+    tip.style.left = `${clientX}px`;
+    tip.style.top = `${clientY}px`;
+    tip.classList.add('visible');
+  }
+
+  function hideSliderTip() {
+    const tip = sliderTipRef.current;
+    if (tip) tip.classList.remove('visible');
+  }
+
+  function onParamSliderPointerMove(e, unit) {
+    if (e.buttons) {
+      hideSliderTip();
+      return;
+    }
+    const v = valueAtSliderPointer(e.currentTarget, e.clientX);
+    showSliderTip(e.clientX, e.clientY, `${v}${unit}`);
   }
 
   function selectBlockItem(id) {
@@ -613,9 +658,6 @@ function App() {
               onClick=${setModeErase}
             >${t('erase')}</button>
           </div>
-          <div class="intensity-val" style=${{ marginTop: '4px' }}>
-            ${brushMode.value === 'erase' ? t('modeEraseHint') : t('modeDrawHint')}
-          </div>
         </div>
 
         <div>
@@ -630,30 +672,83 @@ function App() {
               onClick=${selectPixelateStyle}
             >${t('pixelate')}</button>
           </div>
-          <input
-            type="range" min="1" max="5" step="1" value=${blockIntensity}
-            class="intensity-slider"
-            onInput=${onIntensityInput}
-            onChange=${onIntensityCommit}
-          />
-          <div class="intensity-val">${t('intensity')}: ${blockIntensity}/5</div>
+          <div class="param-label" style=${{ marginTop: '8px' }}>${t('intensity')}</div>
+          <div
+            class="intensity-steps"
+            style=${{ '--i': blockIntensity }}
+            role="group"
+            aria-label=${t('intensity')}
+          >
+            <div class="track" aria-hidden="true"></div>
+            <div class="thumb" aria-hidden="true"></div>
+            ${[1, 2, 3, 4, 5].map((n) => html`
+              <button
+                type="button"
+                class="${n === blockIntensity ? 'active' : ''} ${n <= blockIntensity ? 'lit' : ''}"
+                onClick=${() => selectIntensity(n)}
+              >${n}</button>
+            `)}
+          </div>
         </div>
 
         <div>
           <h3>${t('brush')}</h3>
-          <input
-            type="range" min="5" max="100" value=${brushRadius.value}
-            class="intensity-slider"
-            onInput=${onBrushRadiusInput}
-          />
-          <div class="intensity-val">${t('radius')}: ${brushRadius.value}px</div>
-
-          <input
-            type="range" min="0" max="100" value=${brushHardness.value}
-            class="intensity-slider"
-            onInput=${onBrushHardnessInput}
-          />
-          <div class="intensity-val">${t('hardness')}: ${brushHardness.value}%</div>
+          <div class="param-row">
+            <div class="param-label-row">
+              <span class="param-label">${t('radius')}</span>
+              <span class="num-unit">
+                <input
+                  type="number"
+                  class="param-num"
+                  min="5"
+                  max="100"
+                  value=${brushRadius.value}
+                  onInput=${onBrushRadiusNumInput}
+                  onChange=${onBrushRadiusNumChange}
+                />
+                <span class="unit">px</span>
+              </span>
+            </div>
+            <input
+              type="range"
+              min="5"
+              max="100"
+              value=${brushRadius.value}
+              class="intensity-slider"
+              onInput=${onBrushRadiusInput}
+              onPointerMove=${(e) => onParamSliderPointerMove(e, 'px')}
+              onPointerDown=${hideSliderTip}
+              onPointerLeave=${hideSliderTip}
+            />
+          </div>
+          <div class="param-row">
+            <div class="param-label-row">
+              <span class="param-label">${t('hardness')}</span>
+              <span class="num-unit">
+                <input
+                  type="number"
+                  class="param-num"
+                  min="0"
+                  max="100"
+                  value=${brushHardness.value}
+                  onInput=${onBrushHardnessNumInput}
+                  onChange=${onBrushHardnessNumChange}
+                />
+                <span class="unit">%</span>
+              </span>
+            </div>
+            <input
+              type="range"
+              min="0"
+              max="100"
+              value=${brushHardness.value}
+              class="intensity-slider"
+              onInput=${onBrushHardnessInput}
+              onPointerMove=${(e) => onParamSliderPointerMove(e, '%')}
+              onPointerDown=${hideSliderTip}
+              onPointerLeave=${hideSliderTip}
+            />
+          </div>
         </div>
 
         <div style=${{ display: 'flex', flexDirection: 'column', minHeight: 0, flex: 1 }}>
@@ -724,6 +819,8 @@ function App() {
     `}
 
     <${DialogHost} />
+
+    <div class="slider-tip" ref=${sliderTipRef} aria-hidden="true"></div>
 
     ${toast && html`
       <div class="toast">${toast}</div>
