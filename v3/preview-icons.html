@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Предпросмотр иконок — Censorio v3</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        font-family: system-ui, sans-serif;
+        background: #f1f5f9;
+        min-height: 100vh;
+      }
+      header {
+        text-align: center;
+        padding: 2rem 1rem 1.5rem;
+      }
+      header h1 {
+        font-size: 1.4rem;
+        font-weight: 700;
+        color: #0f172a;
+      }
+      header p {
+        font-size: 0.85rem;
+        color: #64748b;
+        margin-top: 0.25rem;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+        gap: 1rem;
+        padding: 0 1.5rem 3rem;
+        max-width: 1100px;
+        margin: 0 auto;
+      }
+      .card {
+        background: #1e293b;
+        border-radius: 10px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5rem;
+        padding: 1.2rem 0.6rem;
+        transition:
+          transform 0.15s,
+          box-shadow 0.15s;
+      }
+      .card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+      }
+      .icon-wrap {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 44px;
+        height: 44px;
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.06);
+        color: #e2e8f0;
+      }
+      .ui-icon {
+        display: inline-block;
+        width: 28px;
+        height: 28px;
+        background: currentColor;
+        mask-repeat: no-repeat;
+        mask-position: center;
+        mask-size: contain;
+        -webkit-mask-repeat: no-repeat;
+        -webkit-mask-position: center;
+        -webkit-mask-size: contain;
+      }
+      .label {
+        font-size: 0.73rem;
+        font-weight: 600;
+        color: #e2e8f0;
+        text-align: center;
+        word-break: break-word;
+        line-height: 1.15;
+      }
+      footer {
+        text-align: center;
+        padding: 1rem;
+        color: #94a3b8;
+        font-size: 0.8rem;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Иконки редактора (v3)</h1>
+      <p>SVG для топбара и сайдбара</p>
+    </header>
+    <div class="grid" id="grid"></div>
+    <footer>Папка: assets/icons/</footer>
+    <script>
+      const files = [
+        'blur.svg',
+        'brush.svg',
+        'chevron-down.svg',
+        'chevron-up.svg',
+        'clear.svg',
+        'copy.svg',
+        'crop.svg',
+        'draw.svg',
+        'download.svg',
+        'eraser.svg',
+        'info.svg',
+        'lasso.svg',
+        'lasso-2.svg',
+        'menu.svg',
+        'moon.svg',
+        'new.svg',
+        'open.svg',
+        'paste.svg',
+        'paste-2.svg',
+        'pixel.svg',
+        'rect.svg',
+        'redo-2.svg',
+        'select.svg',
+        'sun.svg',
+        'undo-2.svg',
+        'x.svg',
+      ];
+      const grid = document.getElementById('grid');
+      files.forEach((f) => {
+        const card = document.createElement('div');
+        card.className = 'card';
+        const wrap = document.createElement('div');
+        wrap.className = 'icon-wrap';
+        const icon = document.createElement('span');
+        icon.className = 'ui-icon';
+        const url = 'assets/icons/' + f;
+        icon.style.webkitMaskImage = 'url(' + url + ')';
+        icon.style.maskImage = 'url(' + url + ')';
+        wrap.appendChild(icon);
+        card.appendChild(wrap);
+        const lbl = document.createElement('div');
+        lbl.className = 'label';
+        lbl.textContent = f.replace('.svg', '');
+        card.appendChild(lbl);
+        grid.appendChild(card);
+      });
+    </script>
+  </body>
+</html>

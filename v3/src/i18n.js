@@ -11,7 +11,7 @@ function loadLang() {
     const saved = localStorage.getItem(LS_LANG_KEY);
     if (saved === 'en' || saved === 'ru') return saved;
   } catch { /* ignore */ }
-  return 'en';
+  return 'ru';
 }
 
 let lang = loadLang();
@@ -52,9 +52,12 @@ const dict = {
     copy: 'Copy',
     crop: 'Crop',
     clearAll: 'Clear All',
+    clearBlocks: 'Clear Blocks',
     tools: 'Tools',
     toolsMenu: 'Tools',
-    toolRect: 'Rect',
+    resizeSidebar: 'Resize panel',
+    toolRect: 'Rectangle',
+    toolRectShort: 'Rect',
     toolBrush: 'Brush',
     toolLasso: 'Lasso',
     toolSelect: 'Select',
@@ -67,8 +70,6 @@ const dict = {
     mode: 'Mode',
     draw: 'Draw',
     erase: 'Erase',
-    modeEraseHint: 'Erase blur / pixelate',
-    modeDrawHint: 'Apply blur / pixelate',
     brush: 'Brush',
     radius: 'Radius',
     hardness: 'Hardness',
@@ -93,10 +94,10 @@ const dict = {
     toastDownloaded: 'Downloaded!',
     toastCopied: 'Copied!',
     toastBlocksCleared: 'Blocks cleared',
-    toastNewSession: 'New session',
+    toastClearAll: 'Cleared',
     toastCropped: 'Cropped',
-    confirmClearAll: 'Clear all blocks?',
-    confirmNewSession: 'Start a new session? Current image and blocks will be cleared.',
+    confirmClearAll: 'Clear all? Current image and blocks will be cleared.',
+    confirmClearBlocks: 'Clear all blocks?',
     alertNoClipboardImage: 'No image found in clipboard.',
     cropTitle: 'Crop Image',
     cropOriginal: 'Original',
@@ -133,10 +134,13 @@ const dict = {
     download: 'Скачать',
     copy: 'Копировать',
     crop: 'Обрезать',
-    clearAll: 'Очистить',
+    clearAll: 'Очистить всё',
+    clearBlocks: 'Очистить блоки',
     tools: 'Инструменты',
     toolsMenu: 'Инструменты',
-    toolRect: 'Прямоуг.',
+    resizeSidebar: 'Изменить ширину панели',
+    toolRect: 'Прямоугольник',
+    toolRectShort: 'Прямоуг.',
     toolBrush: 'Кисть',
     toolLasso: 'Лассо',
     toolSelect: 'Выбор',
@@ -149,8 +153,6 @@ const dict = {
     mode: 'Режим',
     draw: 'Рисование',
     erase: 'Ластик',
-    modeEraseHint: 'Стереть размытие / пиксели',
-    modeDrawHint: 'Наложить размытие / пиксели',
     brush: 'Кисть',
     radius: 'Радиус',
     hardness: 'Жёсткость',
@@ -175,10 +177,10 @@ const dict = {
     toastDownloaded: 'Скачано!',
     toastCopied: 'Скопировано!',
     toastBlocksCleared: 'Блоки очищены',
-    toastNewSession: 'Новая сессия',
+    toastClearAll: 'Очищено',
     toastCropped: 'Обрезано',
-    confirmClearAll: 'Очистить все блоки?',
-    confirmNewSession: 'Начать новую сессию? Текущее изображение и блоки будут удалены.',
+    confirmClearAll: 'Очистить всё? Текущее изображение и блоки будут удалены.',
+    confirmClearBlocks: 'Очистить все блоки?',
     alertNoClipboardImage: 'В буфере обмена нет изображения.',
     cropTitle: 'Обрезка',
     cropOriginal: 'Исходный',
@@ -190,11 +192,11 @@ const dict = {
     cancel: 'Отмена',
     apply: 'Применить',
     ok: 'ОК',
-    about: 'О приложении',
-    aboutP1: ' – это простой инструмент в браузере для скрытия личных данных на фото и скриншотах. Он позволяет быстро замазать лица, номера автомобилей, части документов или любую другую чувствительную информацию. Все файлы обрабатываются только на вашем устройстве и никуда не отправляются, что гарантирует полную конфиденциальность.',
-    aboutP2: 'Вы можете выделять нужные зоны прямоугольником, кистью или лассо, а затем применять размытие или пикселизацию. Если ошиблись – ластик легко вернёт оригинал.',
-    aboutP3: 'Готовое изображение можно сразу скопировать в буфер обмена или скачать. Это быстрый и удобный способ подготовить скриншот для отправки в чат или публикации в сети.',
-    aboutDontShow: 'Больше не показывать это окно',
+    about: 'О\u00A0приложении',
+    aboutP1: ' – это простой инструмент в\u00A0браузере для\u00A0скрытия личных данных на\u00A0фото и\u00A0скриншотах. Он позволяет быстро замазать лица, номера автомобилей, части документов или\u00A0любую другую чувствительную информацию. Все файлы обрабатываются только на\u00A0вашем устройстве и\u00A0никуда не\u00A0отправляются, что\u00A0гарантирует полную конфиденциальность.',
+    aboutP2: 'Вы можете выделять нужные зоны прямоугольником, кистью или\u00A0лассо, а\u00A0затем применять размытие или\u00A0пикселизацию. Если ошиблись – ластик легко вернёт оригинал.',
+    aboutP3: 'Готовое изображение можно сразу скопировать в\u00A0буфер обмена или\u00A0скачать. Это быстрый и\u00A0удобный способ подготовить скриншот для\u00A0отправки в\u00A0чат или\u00A0публикации в\u00A0сети.',
+    aboutDontShow: 'Больше не\u00A0показывать это окно',
     alertBlobFailed: 'Не удалось создать изображение.',
     alertClipboardWriteFailed: 'Не удалось записать в буфер обмена.',
     ctxDelete: 'Удалить',
@@ -221,9 +223,11 @@ export function t(key, vars) {
   return text;
 }
 
-export function toolLabel(id) {
+/** @param {string} id
+ *  @param {{ compact?: boolean }} [opts] — compact: shorter labels for narrow tool grid */
+export function toolLabel(id, opts = {}) {
   const map = {
-    rect: 'toolRect',
+    rect: opts.compact ? 'toolRectShort' : 'toolRect',
     brush: 'toolBrush',
     lasso: 'toolLasso',
     select: 'toolSelect',

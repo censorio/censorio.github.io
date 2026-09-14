@@ -1,0 +1,945 @@
+import { html } from 'htm/preact';
+import { render } from 'preact';
+import { useEffect, useRef, useState } from 'preact/hooks';
+import { AboutModal, shouldShowAboutOnStartup } from './aboutModal.js';
+import { createCanvasManager } from './canvas/CanvasManager.js';
+import { CropModal } from './cropModal.js';
+import { DialogHost, showAlert, showConfirm } from './dialog.js';
+import { history } from './history.js';
+import { useStoreVersion } from './hooks.js';
+import { getLang, initLang, setLang, t, toolLabel } from './i18n.js';
+import {
+  blocks,
+  brushHardness,
+  brushMode,
+  brushRadius,
+  clearAllBlocks,
+  currentTool,
+  hasImage,
+  intensity,
+  moveDown,
+  moveUp,
+  removeBlock,
+  selectedBlockIds,
+  serializeBlocks,
+  styleMode,
+  updateBlock,
+} from './store.js';
+import { copyCanvasToClipboard, readImageFromClipboard } from './utils/clipboard.js';
+import { downloadCanvasAsPNG } from './utils/download.js';
+import { loadImageFromFile } from './utils/fileLoader.js';
+
+initLang();
+
+const ICON_BASE = new URL('../assets/icons/', import.meta.url);
+
+/** Icon via CSS mask so stroke SVGs inherit currentColor */
+function Icon({ name, size = 18 }) {
+  const url = new URL(`${name}.svg`, ICON_BASE).href;
+  return html`
+    <span
+      class="ui-icon"
+      style=${{
+      width: `${size}px`,
+      height: `${size}px`,
+      WebkitMaskImage: `url(${url})`,
+      maskImage: `url(${url})`,
+    }}
+      aria-hidden="true"
+    ></span>
+  `;
+}
+
+const TOOL_ICONS = {
+  rect: 'rect',
+  brush: 'brush',
+  lasso: 'lasso',
+  select: 'select',
+};
+
+let canvasManager = null;
+
+const LS_BLOCKS_KEY = 'censorio-blocks';
+const LS_IMAGE_KEY = 'censorio-image-data';
+const LS_THEME_KEY = 'censorio-theme';
+const LS_SIDEBAR_WIDTH_KEY = 'censorio-sidebar-width';
+const SIDEBAR_DEFAULT_WIDTH = 250;
+const SIDEBAR_MIN_WIDTH = 200;
+const SIDEBAR_MAX_WIDTH = 500;
+/** Below this, tool grid uses short labels (e.g. «Прямоуг.»). */
+const SIDEBAR_COMPACT_LABELS_MAX = 240;
+
+function clampSidebarWidth(w) {
+  return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(w)));
+}
+
+function loadSidebarWidth() {
+  try {
+    const n = parseInt(localStorage.getItem(LS_SIDEBAR_WIDTH_KEY), 10);
+    if (Number.isFinite(n)) return clampSidebarWidth(n);
+  } catch { /* ignore */ }
+  return SIDEBAR_DEFAULT_WIDTH;
+}
+
+function onCanvasRef(el) {
+  if (el && !canvasManager) {
+    canvasManager = createCanvasManager(el);
+    window.__canvasManager = canvasManager;
+  }
+}
+
+function saveBlocksSession() {
+  try {
+    localStorage.setItem(LS_BLOCKS_KEY, serializeBlocks());
+  } catch { /* localStorage полон */ }
+}
+
+function saveImageSession() {
+  try {
+    const src = canvasManager?.getSourceImage();
+    if (!src) {
+      localStorage.removeItem(LS_IMAGE_KEY);
+      return;
+    }
+    const c = document.createElement('canvas');
+    c.width = src.naturalWidth || src.width;
+    c.height = src.naturalHeight || src.height;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(src, 0, 0);
+    // JPEG has no alpha — transparent pixels become black on restore.
+    const { data } = ctx.getImageData(0, 0, c.width, c.height);
+    let hasAlpha = false;
+    for (let i = 3; i < data.length; i += 4) {
+      if (data[i] < 255) { hasAlpha = true; break; }
+    }
+    localStorage.setItem(
+      LS_IMAGE_KEY,
+      hasAlpha ? c.toDataURL('image/png') : c.toDataURL('image/jpeg', 0.92)
+    );
+  } catch {
+    try { localStorage.removeItem(LS_IMAGE_KEY); } catch { /* ignore */ }
+  }
+}
+
+function clearSessionStorage() {
+  try {
+    localStorage.removeItem(LS_BLOCKS_KEY);
+    localStorage.removeItem(LS_IMAGE_KEY);
+  } catch { /* ignore */ }
+}
+
+const TOOL_IDS = ['rect', 'brush', 'lasso', 'select'];
+
+function App() {
+  useStoreVersion();
+  const [showCrop, setShowCrop] = useState(false);
+  const [showAbout, setShowAbout] = useState(() => shouldShowAboutOnStartup());
+  const [blockStyle, setBlockStyle] = useState('blur');
+  const [blockIntensity, setBlockIntensity] = useState(3);
+  const [isLoading, setIsLoading] = useState(false);
+  const [toast, setToast] = useState(null);
+  const [cursorPos, setCursorPos] = useState(null);
+  const [lang, setLangState] = useState(() => getLang());
+  const [theme, setTheme] = useState(() => {
+    let next = 'light';
+    try { next = localStorage.getItem(LS_THEME_KEY) || 'light'; } catch { /* ignore */ }
+    document.documentElement.setAttribute('data-theme', next);
+    return next;
+  });
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth);
+  const [isResizingSidebar, setIsResizingSidebar] = useState(false);
+  const toastTimerRef = useRef(null);
+  const sessionRestoredRef = useRef(false);
+  const sidebarResizeRef = useRef(null);
+  const sliderTipRef = useRef(null);
+
+  function showToast(message) {
+    setToast(message);
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => setToast(null), 2000);
+  }
+
+  function applyTheme(next) {
+    document.documentElement.setAttribute('data-theme', next);
+    try { localStorage.setItem(LS_THEME_KEY, next); } catch { /* ignore */ }
+    setTheme(next);
+  }
+
+  function applyLang(next) {
+    setLang(next);
+    setLangState(next);
+  }
+
+  // Sync style controls with selected block
+  useEffect(() => {
+    function syncStyle() {
+      if (selectedBlockIds.value.length === 1) {
+        const block = blocks.value.find(b => b.id === selectedBlockIds.value[0]);
+        if (block) {
+          setBlockStyle(block.style);
+          setBlockIntensity(block.intensity);
+          return;
+        }
+      }
+      setBlockStyle(styleMode.value);
+      setBlockIntensity(intensity.value);
+    }
+    syncStyle();
+  }, [selectedBlockIds.value, blocks.value, styleMode.value, intensity.value]);
+
+  // Save blocks when they change
+  useEffect(() => {
+    if (hasImage.value) saveBlocksSession();
+  }, [blocks.value]);
+
+  // Cursor listener + session restore once canvas exists
+  useEffect(() => {
+    let tries = 0;
+    const id = setInterval(() => {
+      tries += 1;
+      if (!canvasManager) {
+        if (tries > 40) clearInterval(id);
+        return;
+      }
+      clearInterval(id);
+      canvasManager.setCursorListener((x, y) => {
+        if (x == null) setCursorPos(null);
+        else setCursorPos({ x, y });
+      });
+      canvasManager.setImageChangeListener(() => {
+        saveImageSession();
+      });
+      if (!sessionRestoredRef.current) {
+        sessionRestoredRef.current = true;
+        restoreSession();
+      }
+    }, 50);
+    return () => clearInterval(id);
+  }, []);
+
+  // beforeunload when there is work
+  useEffect(() => {
+    const onBeforeUnload = (e) => {
+      if (!hasImage.value && blocks.value.length === 0) return;
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [hasImage.value, blocks.value]);
+
+  async function restoreSession() {
+    try {
+      const savedImage = localStorage.getItem(LS_IMAGE_KEY);
+      if (!savedImage || !canvasManager) return;
+      setIsLoading(true);
+      const savedBlocks = localStorage.getItem(LS_BLOCKS_KEY);
+      const img = new Image();
+      img.onload = () => {
+        canvasManager.loadImage(img, { preserveBlocks: true });
+        if (savedBlocks) {
+          try {
+            const arr = JSON.parse(savedBlocks);
+            if (Array.isArray(arr)) blocks.value = arr;
+          } catch { /* ignore */ }
+        }
+        hasImage.value = true;
+        canvasManager.render();
+        setIsLoading(false);
+      };
+      img.onerror = () => setIsLoading(false);
+      img.src = savedImage;
+    } catch {
+      setIsLoading(false);
+    }
+  }
+
+  async function applyLoadedImage(img) {
+    window.__currentTool = currentTool.value;
+    canvasManager.loadImage(img);
+    hasImage.value = true;
+    saveBlocksSession();
+    saveImageSession();
+  }
+
+  async function handleFileInput(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    setIsLoading(true);
+    try {
+      const img = await loadImageFromFile(file);
+      await applyLoadedImage(img);
+      showToast(t('toastImageLoaded'));
+    } catch (err) {
+      await showAlert(err.message);
+    } finally {
+      setIsLoading(false);
+      e.target.value = '';
+    }
+  }
+
+  async function handlePaste() {
+    setIsLoading(true);
+    try {
+      const img = await readImageFromClipboard();
+      if (!img) { await showAlert(t('alertNoClipboardImage')); return; }
+      await applyLoadedImage(img);
+      showToast(t('toastImagePasted'));
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  function handleDownload() {
+    const cvs = canvasManager ? canvasManager.getCanvas() : null;
+    if (!cvs) return;
+    downloadCanvasAsPNG(cvs);
+    showToast(t('toastDownloaded'));
+  }
+
+  function handleCopy() {
+    const cvs = canvasManager ? canvasManager.getCanvas() : null;
+    if (!cvs) return;
+    copyCanvasToClipboard(cvs);
+    showToast(t('toastCopied'));
+  }
+
+  async function handleClearAll() {
+    if (blocks.value.length === 0) return;
+    if (!(await showConfirm(t('confirmClearBlocks')))) return;
+    history.snapshot();
+    clearAllBlocks();
+    if (canvasManager) canvasManager.render();
+    saveBlocksSession();
+    showToast(t('toastBlocksCleared'));
+  }
+
+  async function handleNew() {
+    if (hasImage.value || blocks.value.length > 0) {
+      if (!(await showConfirm(t('confirmClearAll')))) return;
+    }
+    clearAllBlocks();
+    hasImage.value = false;
+    clearSessionStorage();
+    if (canvasManager) canvasManager.clearImage();
+    setCursorPos(null);
+    showToast(t('toastClearAll'));
+  }
+
+  function handleStyleChange(newStyle) {
+    const ids = selectedBlockIds.value;
+    if (ids.length > 0) {
+      history.snapshot();
+      for (const id of ids) updateBlock(id, { style: newStyle });
+      if (canvasManager) canvasManager.render();
+    }
+    styleMode.value = newStyle;
+    setBlockStyle(newStyle);
+  }
+
+  function commitIntensity(newValue) {
+    if (intensity.value !== newValue) intensity.value = newValue;
+    const ids = selectedBlockIds.value;
+    if (ids.length === 0) return;
+    const needsUpdate = ids.some(id => {
+      const block = blocks.value.find(b => b.id === id);
+      return block && block.intensity !== newValue;
+    });
+    if (!needsUpdate) return;
+    history.snapshot();
+    for (const id of ids) updateBlock(id, { intensity: newValue });
+    if (canvasManager) canvasManager.render();
+  }
+
+  function openCrop() {
+    if (canvasManager && canvasManager.getCanvas()) setShowCrop(true);
+  }
+
+  function closeCrop() {
+    setShowCrop(false);
+  }
+
+  function openAbout() {
+    setShowAbout(true);
+  }
+
+  function closeAbout() {
+    setShowAbout(false);
+  }
+
+  function toggleSidebar() {
+    setSidebarOpen(v => !v);
+  }
+
+  function closeSidebar() {
+    setSidebarOpen(false);
+  }
+
+  function onSidebarResizePointerDown(e) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    sidebarResizeRef.current = { startX: e.clientX, startW: sidebarWidth };
+    setIsResizingSidebar(true);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }
+
+  function onSidebarResizePointerMove(e) {
+    const drag = sidebarResizeRef.current;
+    if (!drag) return;
+    const next = clampSidebarWidth(drag.startW + (e.clientX - drag.startX));
+    drag.currentW = next;
+    setSidebarWidth(next);
+  }
+
+  function onSidebarResizePointerUp() {
+    const drag = sidebarResizeRef.current;
+    if (!drag) return;
+    sidebarResizeRef.current = null;
+    setIsResizingSidebar(false);
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    const next = drag.currentW ?? sidebarWidth;
+    try { localStorage.setItem(LS_SIDEBAR_WIDTH_KEY, String(next)); } catch { /* ignore */ }
+  }
+
+  function handleUndo() {
+    if (canvasManager) canvasManager.undo();
+  }
+
+  function handleRedo() {
+    if (canvasManager) canvasManager.redo();
+  }
+
+  function setLangEn() {
+    applyLang('en');
+  }
+
+  function setLangRu() {
+    applyLang('ru');
+  }
+
+  function toggleTheme() {
+    applyTheme(theme === 'dark' ? 'light' : 'dark');
+  }
+
+  function selectTool(id) {
+    currentTool.value = id;
+    window.__currentTool = id;
+    selectedBlockIds.value = [];
+    if (canvasManager) canvasManager.render();
+    setSidebarOpen(false);
+  }
+
+  function selectBlurStyle() {
+    handleStyleChange('blur');
+  }
+
+  function selectPixelateStyle() {
+    handleStyleChange('pixelate');
+  }
+
+  function selectIntensity(newValue) {
+    setBlockIntensity(newValue);
+    commitIntensity(newValue);
+  }
+
+  function setModeDraw() {
+    brushMode.value = 'draw';
+  }
+
+  function setModeErase() {
+    brushMode.value = 'erase';
+  }
+
+  function clampParam(value, min, max) {
+    const n = Math.round(Number(value));
+    if (!Number.isFinite(n)) return min;
+    return Math.min(max, Math.max(min, n));
+  }
+
+  function onBrushRadiusInput(e) {
+    brushRadius.value = clampParam(e.target.value, 5, 100);
+  }
+
+  function onBrushHardnessInput(e) {
+    brushHardness.value = clampParam(e.target.value, 0, 100);
+  }
+
+  function onBrushRadiusNumInput(e) {
+    if (e.target.value === '' || e.target.value === '-') return;
+    brushRadius.value = clampParam(e.target.value, 5, 100);
+  }
+
+  function onBrushRadiusNumChange(e) {
+    brushRadius.value = clampParam(e.target.value === '' ? 5 : e.target.value, 5, 100);
+  }
+
+  function onBrushHardnessNumInput(e) {
+    if (e.target.value === '' || e.target.value === '-') return;
+    brushHardness.value = clampParam(e.target.value, 0, 100);
+  }
+
+  function onBrushHardnessNumChange(e) {
+    brushHardness.value = clampParam(e.target.value === '' ? 0 : e.target.value, 0, 100);
+  }
+
+  function valueAtSliderPointer(slider, clientX) {
+    const min = Number(slider.min);
+    const max = Number(slider.max);
+    const step = Number(slider.step) || 1;
+    const rect = slider.getBoundingClientRect();
+    // Match browser mapping: value spans (trackWidth - thumbWidth), not full width
+    const thumb = 14;
+    const usable = Math.max(1, rect.width - thumb);
+    const x = clientX - rect.left - thumb / 2;
+    const ratio = Math.min(1, Math.max(0, x / usable));
+    const raw = min + ratio * (max - min);
+    const stepped = Math.round(raw / step) * step;
+    return Math.min(max, Math.max(min, stepped));
+  }
+
+  function showSliderTip(clientX, clientY, text) {
+    const tip = sliderTipRef.current;
+    if (!tip) return;
+    tip.textContent = text;
+    tip.style.left = `${clientX}px`;
+    tip.style.top = `${clientY}px`;
+    tip.classList.add('visible');
+  }
+
+  function hideSliderTip() {
+    const tip = sliderTipRef.current;
+    if (tip) tip.classList.remove('visible');
+  }
+
+  function onParamSliderPointerMove(e, unit) {
+    if (e.buttons) {
+      hideSliderTip();
+      return;
+    }
+    const v = valueAtSliderPointer(e.currentTarget, e.clientX);
+    showSliderTip(e.clientX, e.clientY, `${v}${unit}`);
+  }
+
+  function selectBlockItem(id) {
+    selectedBlockIds.value = [id];
+    if (canvasManager) canvasManager.render();
+  }
+
+  function handleMoveBlockUp(e, id) {
+    e.stopPropagation();
+    moveUp(id);
+    if (canvasManager) canvasManager.render();
+  }
+
+  function handleMoveBlockDown(e, id) {
+    e.stopPropagation();
+    moveDown(id);
+    if (canvasManager) canvasManager.render();
+  }
+
+  function handleDeleteBlock(e, id) {
+    e.stopPropagation();
+    history.snapshot();
+    removeBlock(id);
+    if (canvasManager) canvasManager.render();
+  }
+
+  async function applyCrop({ top, bottom, left, right }) {
+    if (canvasManager) {
+      history.snapshot({ imageDataUrl: canvasManager.getImageDataUrl() });
+      await canvasManager.cropImage(left, top, right, bottom);
+      saveImageSession();
+      saveBlocksSession();
+    }
+    setShowCrop(false);
+    showToast(t('toastCropped'));
+  }
+
+  // Drag-and-drop
+  useEffect(() => {
+    const area = document.querySelector('.canvas-area');
+    if (!area) return;
+
+    function onDragOver(e) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+    }
+
+    async function onDrop(e) {
+      e.preventDefault();
+      const file = e.dataTransfer?.files?.[0];
+      if (!file || !file.type.startsWith('image/')) return;
+      setIsLoading(true);
+      try {
+        const img = await loadImageFromFile(file);
+        await applyLoadedImage(img);
+        showToast(t('toastImageLoaded'));
+      } catch (err) {
+        await showAlert(err.message);
+      } finally {
+        setIsLoading(false);
+      }
+    }
+
+    area.addEventListener('dragover', onDragOver);
+    area.addEventListener('drop', onDrop);
+    return () => {
+      area.removeEventListener('dragover', onDragOver);
+      area.removeEventListener('drop', onDrop);
+    };
+  }, [lang]);
+
+  const cvs = canvasManager ? canvasManager.getCanvas() : null;
+  const w = cvs ? cvs.width : 0;
+  const h = cvs ? cvs.height : 0;
+  const canUndo = history.canUndo();
+  const canRedo = history.canRedo();
+  const selCount = selectedBlockIds.value.length;
+  const toolName = toolLabel(currentTool.value);
+  const cursorLabel = cursorPos ? `| ${cursorPos.x}, ${cursorPos.y}` : '';
+  const styleSuffix = selCount === 1
+    ? t('styleSelectedBlock')
+    : selCount > 1
+      ? t('styleSelectedBlocks')
+      : '';
+  const showBrushParams = currentTool.value === 'brush';
+  const selectedHasDrawBlock = selectedBlockIds.value.some((id) => {
+    const b = blocks.value.find((x) => x.id === id);
+    return b && b.mode !== 'erase';
+  });
+  const showStyleControls = brushMode.value === 'draw' || selectedHasDrawBlock;
+  const compactToolLabels = sidebarWidth < SIDEBAR_COMPACT_LABELS_MAX;
+
+  return html`
+    <div class="topbar">
+      <button class="icon-btn sidebar-toggle" title=${t('toolsMenu')} onClick=${toggleSidebar}>
+        <${Icon} name="menu" />
+      </button>
+
+      <div class="icon-group topbar-history">
+        <button class="icon-btn" title=${t('undo')} onClick=${handleUndo} disabled=${!canUndo}>
+          <${Icon} name="undo-2" />
+        </button>
+        <button class="icon-btn" title=${t('redo')} onClick=${handleRedo} disabled=${!canRedo}>
+          <${Icon} name="redo-2" />
+        </button>
+      </div>
+
+      <span class="sep"></span>
+
+      <div class="icon-group">
+        <label class="icon-btn file-btn" title=${t('openFile')}>
+          <${Icon} name="open" />
+          <input type="file" accept="image/*" hidden onInput=${handleFileInput} />
+        </label>
+        <button class="icon-btn" title=${t('paste')} onClick=${handlePaste}>
+          <${Icon} name="paste-2" />
+        </button>
+        <button
+          class="icon-btn danger"
+          title=${t('clearAll')}
+          onClick=${handleNew}
+          disabled=${!hasImage.value && blocks.value.length === 0}
+        >
+          <${Icon} name="clear" />
+        </button>
+      </div>
+
+      <span class="sep"></span>
+
+      <div class="icon-group">
+        <button class="icon-btn accent" title=${t('download')} onClick=${handleDownload} disabled=${!hasImage.value}>
+          <${Icon} name="download" />
+        </button>
+        <button class="icon-btn" title=${t('copy')} onClick=${handleCopy} disabled=${!hasImage.value}>
+          <${Icon} name="copy" />
+        </button>
+        <button class="icon-btn" title=${t('crop')} onClick=${openCrop} disabled=${!hasImage.value}>
+          <${Icon} name="crop" />
+        </button>
+      </div>
+
+      <div class="topbar-right">
+        <button class="icon-btn" type="button" title=${t('about')} onClick=${openAbout}>
+          <${Icon} name="info" />
+        </button>
+        <span class="sep"></span>
+        <div class="lang-toggle" title=${t('langTitle')}>
+          <button
+            class="${lang === 'en' ? 'active' : ''}"
+            onClick=${setLangEn}
+          >${t('langEn')}</button>
+          <button
+            class="${lang === 'ru' ? 'active' : ''}"
+            onClick=${setLangRu}
+          >${t('langRu')}</button>
+        </div>
+        <button
+          class="icon-btn theme-toggle"
+          title=${theme === 'dark' ? t('lightTheme') : t('darkTheme')}
+          onClick=${toggleTheme}
+        ><${Icon} name=${theme === 'dark' ? 'sun' : 'moon'} /></button>
+      </div>
+    </div>
+
+    <div class="main">
+      ${sidebarOpen && html`<div class="sidebar-backdrop" onClick=${closeSidebar}></div>`}
+      <div
+        class="sidebar ${sidebarOpen ? 'open' : ''} ${isResizingSidebar ? 'resizing' : ''}"
+        style=${{ '--sidebar-width': `${sidebarWidth}px` }}
+      >
+        <div
+          class="sidebar-resize"
+          title=${t('resizeSidebar')}
+          onPointerDown=${onSidebarResizePointerDown}
+          onPointerMove=${onSidebarResizePointerMove}
+          onPointerUp=${onSidebarResizePointerUp}
+          onPointerCancel=${onSidebarResizePointerUp}
+        ></div>
+
+        <section class="panel-section">
+          <h3>${t('tools')}</h3>
+          <div class="tool-btns tool-btns-icons">
+            ${TOOL_IDS.map(id => html`
+              <button
+                type="button"
+                class="tool-btn icon-tool ${currentTool.value === id ? 'active' : ''}"
+                title=${toolLabel(id)}
+                onClick=${() => selectTool(id)}
+              >
+                <${Icon} name=${TOOL_ICONS[id]} size=${18} />
+                <span class="tool-caption">${toolLabel(id, { compact: compactToolLabels })}</span>
+              </button>
+            `)}
+          </div>
+        </section>
+
+        <section class="panel-section">
+          <h3>${t('mode')}</h3>
+          <div class="icon-toggle" role="group" aria-label=${t('mode')}>
+            <button
+              type="button"
+              class="${brushMode.value === 'draw' ? 'active' : ''}"
+              title=${t('draw')}
+              onClick=${setModeDraw}
+            >
+              <${Icon} name="draw" size=${18} />
+              <span>${t('draw')}</span>
+            </button>
+            <button
+              type="button"
+              class="${brushMode.value === 'erase' ? 'active' : ''}"
+              title=${t('erase')}
+              onClick=${setModeErase}
+            >
+              <${Icon} name="eraser" size=${18} />
+              <span>${t('erase')}</span>
+            </button>
+          </div>
+        </section>
+
+        ${showStyleControls && html`
+          <section class="panel-section">
+            <h3>${t('style')} ${styleSuffix}</h3>
+            <div class="icon-toggle" role="group" aria-label=${t('style')}>
+              <button
+                type="button"
+                class="${blockStyle === 'blur' ? 'active' : ''}"
+                title=${t('blur')}
+                onClick=${selectBlurStyle}
+              >
+                <${Icon} name="blur" size=${18} />
+                <span>${t('blur')}</span>
+              </button>
+              <button
+                type="button"
+                class="${blockStyle === 'pixelate' ? 'active' : ''}"
+                title=${t('pixelate')}
+                onClick=${selectPixelateStyle}
+              >
+                <${Icon} name="pixel" size=${18} />
+                <span>${t('pixelate')}</span>
+              </button>
+            </div>
+            <div class="param-label" style=${{ marginTop: '10px' }}>${t('intensity')}</div>
+            <div
+              class="intensity-steps"
+              style=${{ '--i': blockIntensity }}
+              role="group"
+              aria-label=${t('intensity')}
+            >
+              <div class="track" aria-hidden="true"></div>
+              <div class="thumb" aria-hidden="true"></div>
+              ${[1, 2, 3, 4, 5].map((n) => html`
+                <button
+                  type="button"
+                  class="${n === blockIntensity ? 'active' : ''} ${n <= blockIntensity ? 'lit' : ''}"
+                  onClick=${() => selectIntensity(n)}
+                >${n}</button>
+              `)}
+            </div>
+          </section>
+        `}
+
+        ${showBrushParams && html`
+          <section class="panel-section">
+            <h3>${t('brush')}</h3>
+            <div class="param-row">
+              <div class="param-label-row">
+                <span class="param-label">${t('radius')}</span>
+                <span class="num-unit">
+                  <input
+                    type="number"
+                    class="param-num"
+                    min="5"
+                    max="100"
+                    value=${brushRadius.value}
+                    onInput=${onBrushRadiusNumInput}
+                    onChange=${onBrushRadiusNumChange}
+                  />
+                  <span class="unit">px</span>
+                </span>
+              </div>
+              <input
+                type="range"
+                min="5"
+                max="100"
+                value=${brushRadius.value}
+                class="intensity-slider"
+                onInput=${onBrushRadiusInput}
+                onPointerMove=${(e) => onParamSliderPointerMove(e, 'px')}
+                onPointerDown=${hideSliderTip}
+                onPointerLeave=${hideSliderTip}
+              />
+            </div>
+            <div class="param-row">
+              <div class="param-label-row">
+                <span class="param-label">${t('hardness')}</span>
+                <span class="num-unit">
+                  <input
+                    type="number"
+                    class="param-num"
+                    min="0"
+                    max="100"
+                    value=${brushHardness.value}
+                    onInput=${onBrushHardnessNumInput}
+                    onChange=${onBrushHardnessNumChange}
+                  />
+                  <span class="unit">%</span>
+                </span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                value=${brushHardness.value}
+                class="intensity-slider"
+                onInput=${onBrushHardnessInput}
+                onPointerMove=${(e) => onParamSliderPointerMove(e, '%')}
+                onPointerDown=${hideSliderTip}
+                onPointerLeave=${hideSliderTip}
+              />
+            </div>
+          </section>
+        `}
+
+        <section class="panel-section panel-section-grow">
+          <div class="section-heading">
+            <h3>${t('blocks')} (${blocks.value.length})</h3>
+            <button
+              type="button"
+              class="icon-btn section-clear-btn"
+              title=${t('clearBlocks')}
+              onClick=${handleClearAll}
+              disabled=${!hasImage.value || blocks.value.length === 0}
+            >
+              <${Icon} name="clear" size=${16} />
+            </button>
+          </div>
+          <div class="block-list">
+            ${blocks.value.map((b, i) => html`
+              <div
+                class="block-item ${selectedBlockIds.value.includes(b.id) ? 'selected' : ''}"
+                onClick=${() => selectBlockItem(b.id)}
+              >
+                <span class="block-icon"><${Icon} name=${TOOL_ICONS[b.type] || 'rect'} size=${14} /></span>
+                <span class="label">${i + 1}. ${toolLabel(b.type)}${b.mode === 'erase' ? ` ${t('eraseTag')}` : ''} ${b.mode === 'erase' ? '' : `${b.style === 'blur' ? t('blur') : t('pixelate')} ${b.intensity}`}</span>
+                <div class="block-actions">
+                  <button class="z-btn" title=${t('moveUp')} onClick=${(e) => handleMoveBlockUp(e, b.id)}>
+                    <${Icon} name="chevron-up" size=${14} />
+                  </button>
+                  <button class="z-btn" title=${t('moveDown')} onClick=${(e) => handleMoveBlockDown(e, b.id)}>
+                    <${Icon} name="chevron-down" size=${14} />
+                  </button>
+                  <button class="del-btn" title=${t('delete')} onClick=${(e) => handleDeleteBlock(e, b.id)}>
+                    <${Icon} name="x" size=${14} />
+                  </button>
+                </div>
+              </div>
+            `)}
+          </div>
+        </section>
+      </div>
+
+      <div class="canvas-area">
+        <div class="canvas-wrap ${hasImage.value ? '' : 'empty'} tool-${currentTool.value}">
+          <canvas ref=${onCanvasRef}></canvas>
+          ${!hasImage.value && html`
+            <div class="empty-state">
+              <div class="icon empty-icon"><${Icon} name="open" size=${40} /></div>
+              <p>${t('emptyHint').split('\n').map((line, idx) => idx === 0 ? html`${line}<br/>` : line)}</p>
+              <label class="file-btn empty-open-btn">
+                <span>${t('openFile')}</span>
+                <input type="file" accept="image/*" hidden onInput=${handleFileInput} />
+              </label>
+            </div>
+          `}
+          ${isLoading && html`
+            <div class="loading-overlay">
+              <div class="spinner"></div>
+              <p>${t('loading')}</p>
+            </div>
+          `}
+        </div>
+      </div>
+    </div>
+
+    <div class="statusbar">
+      <span>${hasImage.value ? `${w} × ${h} px` : t('noImage')} ${hasImage.value ? `| ${t('toolLabel')}: ${toolName} ${cursorLabel}` : ''}</span>
+      <span>${blocks.value.length} ${t('blocksPlural')} | ${t('statusHint')}</span>
+    </div>
+
+    ${showCrop && html`
+      <${CropModal}
+        width=${w} height=${h}
+        onConfirm=${applyCrop}
+        onCancel=${closeCrop}
+      />
+    `}
+
+    ${showAbout && html`
+      <${AboutModal}
+        onClose=${closeAbout}
+        lang=${lang}
+        theme=${theme}
+        onLangEn=${setLangEn}
+        onLangRu=${setLangRu}
+        onToggleTheme=${toggleTheme}
+      />
+    `}
+
+    <${DialogHost} />
+
+    <div class="slider-tip" ref=${sliderTipRef} aria-hidden="true"></div>
+
+    ${toast && html`
+      <div class="toast">${toast}</div>
+    `}
+  `;
+}
+
+render(html`<${App}/>`, document.getElementById('app'));
